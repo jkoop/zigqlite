@@ -1,5 +1,8 @@
 # zigqlite
 
+> [!NOTE]  
+> This is a fork of https://chiselapp.com/user/javier/repository/zigqlite
+
 An [SQLite](https://sqlite.org) binding for [Zig](https://ziglang.org).
 
 ## Install
