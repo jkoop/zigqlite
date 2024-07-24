@@ -4,14 +4,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const lib = b.addStaticLibrary(.{
-        .name = "zigqlite",
+    _ = b.addModule("zigqlite", .{
         .root_source_file = b.path("src/sqlite.zig"),
         .target = target,
         .optimize = optimize,
     });
-
-    b.installArtifact(lib);
 
     const main_tests = b.addTest(.{
         .root_source_file = b.path("src/sqlite.zig"),
