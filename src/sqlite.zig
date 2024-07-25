@@ -160,11 +160,25 @@ pub const DB = struct {
         };
     }
 
+    /// To execute multiple semicolon-separated statements in one call, set `args` to an empty struct or void
     pub fn exec(self: *DB, sql: [:0]const u8, args: anytype) Error!void {
-        var stmt = try self.prep(sql);
-        stmt.on_end = .finalize;
+        const use_prep: bool = switch (@typeInfo(@TypeOf(args))) {
+            .Struct => |Struct| Struct.fields.len > 0,
+            else => false,
+        };
 
-        try stmt.exec(args, void);
+        if (use_prep) {
+            var stmt = try self.prep(sql);
+            stmt.on_end = .finalize;
+
+            try stmt.exec(args, void);
+        } else {
+            const rc = cSqlite.sqlite3_exec(self.db, sql.ptr, null, null, null);
+            if (rc != cSqlite.SQLITE_OK) {
+                self.errmsg = errCopy(cSqlite.sqlite3_errmsg(self.db));
+            }
+            try getErrOrVoid(rc);
+        }
     }
 
     pub fn query(self: *DB, sql: [:0]const u8, args: anytype, comptime Rowtype: type) Error!Cursor(Rowtype) {
@@ -666,5 +680,49 @@ test "write boolean" {
     if (row) |payload| {
         try std.testing.expect(payload.col1 == true);
         try std.testing.expect(payload.col2 == false);
+    }
+}
+
+test "db.exec with empty struct args" {
+    std.fs.cwd().deleteFile("testdb.db") catch {};
+    var db = try DB.open(test_allocator, "testdb.db");
+    defer {
+        db.close() catch {};
+        std.fs.cwd().deleteFile("testdb.db") catch {};
+    }
+
+    try db.exec(
+        \\create table t1 (col1);
+        \\create table t2 (col2);
+        \\insert into t2 values (42);
+    , .{});
+
+    var cursor = try db.query("select * from t2", .{}, struct { col2: i16 });
+    const row = try cursor.fetch();
+    try std.testing.expect(row != null);
+    if (row) |payload| {
+        try std.testing.expect(payload.col2 == 42);
+    }
+}
+
+test "db.exec with void args" {
+    std.fs.cwd().deleteFile("testdb.db") catch {};
+    var db = try DB.open(test_allocator, "testdb.db");
+    defer {
+        db.close() catch {};
+        std.fs.cwd().deleteFile("testdb.db") catch {};
+    }
+
+    try db.exec(
+        \\create table t1 (col1);
+        \\create table t2 (col2);
+        \\insert into t2 values (42);
+    , void);
+
+    var cursor = try db.query("select * from t2", .{}, struct { col2: i16 });
+    const row = try cursor.fetch();
+    try std.testing.expect(row != null);
+    if (row) |payload| {
+        try std.testing.expect(payload.col2 == 42);
     }
 }
