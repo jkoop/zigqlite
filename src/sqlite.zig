@@ -234,6 +234,7 @@ const Stmt = struct {
         }
 
         return switch (@typeInfo(@TypeOf(arg))) {
+            .Bool => getErrOrVoid(cSqlite.sqlite3_bind_int(self.cStmt, index, @intFromBool(arg))),
             .Int, .ComptimeInt => getErrOrVoid(cSqlite.sqlite3_bind_int64(self.cStmt, index, @intCast(arg))),
             .Float, .ComptimeFloat => getErrOrVoid(cSqlite.sqlite3_bind_double(self.cStmt, index, @floatCast(arg))),
             .Pointer => |ptr_info| switch (ptr_info.size) {
@@ -299,6 +300,11 @@ fn Cursor(comptime Rowtype: type) type {
             const stmt = self.stmt orelse unreachable;
 
             switch (@typeInfo(T)) {
+                .Bool => {
+                    const ccolval = cSqlite.sqlite3_column_int(stmt.cStmt, i);
+                    return ccolval != 0;
+                },
+
                 .Int => |intInfo| if (intInfo.signedness == .signed) {
                     if (intInfo.bits <= 32) {
                         const ccolval = cSqlite.sqlite3_column_int(stmt.cStmt, i);
@@ -612,5 +618,53 @@ test "iteration style" {
             },
             else => unreachable,
         }
+    }
+}
+
+test "read boolean" {
+    std.fs.cwd().deleteFile("testdb.db") catch {};
+    var db = try DB.open(test_allocator, "testdb.db");
+    defer {
+        db.close() catch {};
+        std.fs.cwd().deleteFile("testdb.db") catch {};
+    }
+
+    {
+        var cursor = try db.query("select 1 as exists", .{}, struct { exists: bool });
+        const row = try cursor.fetch();
+        try std.testing.expect(row != null);
+        if (row) |payload| {
+            try std.testing.expect(payload.exists == true);
+        }
+    }
+
+    {
+        try db.exec("create table t1 (col1, col2)", .{});
+        try db.exec("insert into t1 (col1, col2) values (1, 2)", .{});
+        var cursor = try db.query("select exists(select * from t1 where col1 = ? and col2 = ?) as exists", .{ 1, 2 }, struct { exists: bool });
+        const row = try cursor.fetch();
+        try std.testing.expect(row != null);
+        if (row) |payload| {
+            try std.testing.expect(payload.exists == true);
+        }
+    }
+}
+
+test "write boolean" {
+    std.fs.cwd().deleteFile("testdb.db") catch {};
+    var db = try DB.open(test_allocator, "testdb.db");
+    defer {
+        db.close() catch {};
+        std.fs.cwd().deleteFile("testdb.db") catch {};
+    }
+
+    try db.exec("create table t1 (col1, col2)", .{});
+    try db.exec("insert into t1 (col1, col2) values (?, ?)", .{ true, false });
+    var cursor = try db.query("select * from t1", .{}, struct { col1: bool, col2: bool });
+    const row = try cursor.fetch();
+    try std.testing.expect(row != null);
+    if (row) |payload| {
+        try std.testing.expect(payload.col1 == true);
+        try std.testing.expect(payload.col2 == false);
     }
 }
