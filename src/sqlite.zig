@@ -189,6 +189,10 @@ pub const DB = struct {
         curs.owns_statement = true;
         return curs;
     }
+
+    pub fn getLastInsertRowId(self: *DB) i64 {
+        return @intCast(cSqlite.sqlite3_last_insert_rowid(self.db));
+    }
 };
 
 const Stmt = struct {
@@ -747,4 +751,21 @@ test "bind optional value" {
 
     col = 42;
     try db.exec("insert into t1 (col1) values (?)", .{col});
+}
+
+test "get last insert row id" {
+    std.fs.cwd().deleteFile("testdb.db") catch {};
+    var db = try DB.open(test_allocator, "testdb.db");
+    defer {
+        db.close() catch {};
+        std.fs.cwd().deleteFile("testdb.db") catch {};
+    }
+
+    try db.exec("create table t1 (col1)", void);
+    try db.exec("insert into t1 (col1) values (?)", .{1});
+    try std.testing.expect(db.getLastInsertRowId() == 1);
+    try std.testing.expect(db.getLastInsertRowId() == 1);
+    try db.exec("insert into t1 (col1) values (?)", .{1});
+    try std.testing.expect(db.getLastInsertRowId() == 2);
+    try std.testing.expect(db.getLastInsertRowId() == 2);
 }
