@@ -258,6 +258,11 @@ const Stmt = struct {
             },
             .Array => self.bind_slice(index, arg[0..]),
             .Null => getErrOrVoid(cSqlite.sqlite3_bind_null(self.cStmt, index)),
+            .Optional => if (arg) |not_null| {
+                return self.bind_parameter(i, name, not_null);
+            } else {
+                return getErrOrVoid(cSqlite.sqlite3_bind_null(self.cStmt, index));
+            },
             else => Error.Mismatch,
         };
     }
@@ -725,4 +730,21 @@ test "db.exec with void args" {
     if (row) |payload| {
         try std.testing.expect(payload.col2 == 42);
     }
+}
+
+test "bind optional value" {
+    std.fs.cwd().deleteFile("testdb.db") catch {};
+    var db = try DB.open(test_allocator, "testdb.db");
+    defer {
+        db.close() catch {};
+        std.fs.cwd().deleteFile("testdb.db") catch {};
+    }
+
+    try db.exec("create table t1 (col1)", void);
+
+    var col: ?i16 = null;
+    try db.exec("insert into t1 (col1) values (?)", .{col});
+
+    col = 42;
+    try db.exec("insert into t1 (col1) values (?)", .{col});
 }
