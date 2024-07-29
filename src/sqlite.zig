@@ -3,36 +3,96 @@ const builtin = std.builtin;
 
 const cSqlite = @cImport(@cInclude("sqlite3.h"));
 
+/// Most of these are direct representations of SQLite errors https://sqlite.org/c3ref/c_abort.html. Some of them aren't errors; they're statuses used internally. Original desciptions are given in quotes.
 pub const Error = error{
+    /// "Generic error"; such as an SQL syntax error
     Error,
+
+    /// "Internal logic error in SQLite" or zigqlite
     Internal,
+
+    /// "Access permission denied"
     Permission,
+
+    /// "Callback routine requested an abort"
     Abort,
+
+    /// "The database file is locked"
     Busy,
+
+    /// "A table in the database is locked"
     Locked,
+
+    /// "A `malloc()` failed"
     OutOfMemory,
+
+    /// "Attempt to write a readonly database"
     Readonly,
+
+    /// "Operation terminated by `sqlite3_interrupt()`"
     Interrupt,
+
+    /// "Some kind of disk I/O error occurred"
     Io,
+
+    /// "The database disk image is malformed"
     Corrupt,
+
+    /// "Unknown opcode in `sqlite3_file_control()`"
     NotFound,
+
+    /// "Insertion failed because database is full"
     Full,
+
+    /// "Unable to open the database file"
     CantOpen,
+
+    /// "Database lock protocol error"
     Protocol,
+
+    /// "Internal use only"
     Empty,
+
+    /// "The database schema changed"
     Schema,
+
+    /// "String or BLOB exceeds size limit"
     TooBig,
+
+    /// "Abort due to constraint violation"
     Constraint,
+
+    /// "Data type mismatch" (applies to both SQLite and zigqlite)
     Mismatch,
+
+    /// "Library used incorrectly" (applies to both SQLite and zigqlite)
     Misuse,
+
+    /// "Uses OS features not supported on host"
     NoLFS,
+
+    /// "Authorization denied"
     Auth,
+
+    /// "Not used"
     Format,
+
+    /// "2nd parameter to `sqlite3_bind()` out of range"
     Range,
+
+    /// "File opened that is not a database file"
     NotADB,
+
+    /// "Notifications from `sqlite3_log()`"
     Notice,
+
+    /// "Warnings from `sqlite3_log()`"
     Warning,
+
+    /// "`sqlite3_step()` has another row ready"
     Row,
+
+    /// "`sqlite3_step()` has finished executing"
     Done,
 };
 
@@ -94,6 +154,7 @@ fn cargsToSlices(allocator: std.mem.Allocator, argc: c_int, argv: [*c][*c]const 
     return out;
 }
 
+/// Represents an open database. Use `open()` to (create and) open a database file.
 pub const DB = struct {
     db: *cSqlite.struct_sqlite3,
     errmsg: ?[*:0]u8 = null,
@@ -111,6 +172,7 @@ pub const DB = struct {
         }
     }
 
+    /// (Creates and) opens the named file as an SQLite3 database in read/write mode
     pub fn open(allocator: std.mem.Allocator, filename: []const u8) !DB {
         var path_c = try std.posix.toPosixPath(filename);
         var dbptr: ?*cSqlite.struct_sqlite3 = undefined;
@@ -125,6 +187,8 @@ pub const DB = struct {
         };
     }
 
+    /// A destructor for the DB object.
+    /// From SQLite docs: "If called with unfinalized prepared statements, unclosed BLOB handlers, and/or unfinished `sqlite3_backups`, it returns `void` regardless, but instead of deallocating the database connection immediately, it marks the database connection as an unusable "zombie" and makes arrangements to automatically deallocate the database connection after all prepared statements are finalized, all BLOB handles are closed, and all backups have finished."
     pub fn close(self: *DB) !void {
         self.clearErr();
         try getErrOrVoid(cSqlite.sqlite3_close_v2(self.db));
@@ -144,6 +208,7 @@ pub const DB = struct {
         return getErr(err);
     }
 
+    /// Compiles the given SQL, and returns its statment. See Stmt for more info.
     pub fn prep(self: *DB, sql: [:0]const u8) Error!Stmt {
         var pstmt: ?*cSqlite.struct_sqlite3_stmt = null;
 
@@ -160,7 +225,7 @@ pub const DB = struct {
         };
     }
 
-    /// To execute multiple semicolon-separated statements in one call, set `args` to an empty struct or void
+    /// Compiles the given SQL, and executes it with the given bindings, `args`. To execute multiple semicolon-separated statements in one call, set `args` to an empty struct or void.
     pub fn exec(self: *DB, sql: [:0]const u8, args: anytype) Error!void {
         const use_prep: bool = switch (@typeInfo(@TypeOf(args))) {
             .Struct => |Struct| Struct.fields.len > 0,
@@ -181,6 +246,7 @@ pub const DB = struct {
         }
     }
 
+    /// Shorthand for `.prep()`, `.exec()`.
     pub fn query(self: *DB, sql: [:0]const u8, args: anytype, comptime Rowtype: type) Error!Cursor(Rowtype) {
         var stmt = try self.allocator.create(Stmt);
         stmt.* = try self.prep(sql);
@@ -190,16 +256,19 @@ pub const DB = struct {
         return curs;
     }
 
+    /// **Footgun:** This can give unexpected results when multithreading. Consider using a shared mutex around all INSERTs. @todo write a shorthand function for this?
     pub fn getLastInsertRowId(self: *DB) i64 {
         return @intCast(cSqlite.sqlite3_last_insert_rowid(self.db));
     }
 };
 
+/// From the SQLite documention: "An instance of this object represents a single SQL statement that has been compiled into binary form and is ready to be evaluated."
 const Stmt = struct {
     db: ?*DB,
     cStmt: *cSqlite.sqlite3_stmt,
     on_end: enum { reset, finalize, destroy } = .reset,
 
+    /// The destructor. Every Stmt must be destructed before the database can be closed. @todo confirm if this must be called manually, or if the Cursor object automatically calls this for us when atempting to fetch the row after the last row.
     pub fn finalize(self: *Stmt) void {
         if (self.db != null) {
             switch (self.on_end) {
@@ -220,11 +289,12 @@ const Stmt = struct {
         }
     }
 
-    pub fn getErrAndMsg(self: *Stmt, err: c_int) Error {
+    fn getErrAndMsg(self: *Stmt, err: c_int) Error {
         const db = self.db orelse return Error.Misuse;
         return db.getErrAndMsg(err);
     }
 
+    /// Evaluate the statement and return a Cursor with which to iterate over the results.
     pub fn exec(self: *Stmt, args: anytype, comptime Rowtype: type) Error!Cursor(Rowtype) {
         try getErrOrVoid(cSqlite.sqlite3_reset(self.cStmt));
         try self.bind(args);
@@ -287,6 +357,7 @@ fn Cursor(comptime Rowtype: type) type {
         stmt: ?*Stmt,
         owns_statement: bool = false,
 
+        /// @todo figure out what this does. It's probably related to `Stmt.finalize`.
         pub fn finalize(self: *Self) void {
             var stmt = self.stmt orelse return;
             _ = cSqlite.sqlite3_reset(stmt.cStmt);
@@ -295,6 +366,7 @@ fn Cursor(comptime Rowtype: type) type {
             self.stmt = null;
         }
 
+        /// Returns the next row of the Stmt's results, if there is one.
         pub fn fetch(self: *Self) Error!?Rowtype {
             const stmt = self.stmt orelse return null;
             const rc = cSqlite.sqlite3_step(stmt.cStmt);
