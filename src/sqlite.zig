@@ -3,7 +3,7 @@ const builtin = std.builtin;
 
 const cSqlite = @cImport(@cInclude("sqlite3.h"));
 
-/// Most of these are direct representations of SQLite errors https://sqlite.org/c3ref/c_abort.html. Some of them aren't errors; they're statuses used internally. Original desciptions are given in quotes.
+/// Most of these are direct representations of SQLite errors https://sqlite.org/c3ref/c_abort.html. Some of them aren't errors; they're statuses used internally. Original descriptions are given in quotes.
 pub const Error = error{
     /// "Generic error"; such as an SQL syntax error
     Error,
@@ -159,6 +159,7 @@ pub const DB = struct {
     db: *cSqlite.struct_sqlite3,
     errmsg: ?[*:0]u8 = null,
     allocator: std.mem.Allocator,
+    insert_mutex: std.Thread.Mutex = .{},
 
     const AfterRow = enum {
         Ok,
@@ -208,7 +209,7 @@ pub const DB = struct {
         return getErr(err);
     }
 
-    /// Compiles the given SQL, and returns its statment. See Stmt for more info.
+    /// Compiles the given SQL, and returns its statement. See Stmt for more info.
     pub fn prep(self: *DB, sql: [:0]const u8) Error!Stmt {
         var pstmt: ?*cSqlite.struct_sqlite3_stmt = null;
 
@@ -225,7 +226,7 @@ pub const DB = struct {
         };
     }
 
-    /// Compiles the given SQL, and executes it with the given bindings, `args`. To execute multiple semicolon-separated statements in one call, set `args` to an empty struct or void.
+    /// Compiles the given SQL, and executes it with the given bindings, `args`. To execute multiple semicolon-separated statements in one call, set `args` to an empty struct or void. **Footgun:** Use `.insert()` for *all* INSERTs; see `.insert()` for more info.
     pub fn exec(self: *DB, sql: [:0]const u8, args: anytype) Error!void {
         const use_prep: bool = switch (@typeInfo(@TypeOf(args))) {
             .Struct => |Struct| Struct.fields.len > 0,
@@ -246,6 +247,14 @@ pub const DB = struct {
         }
     }
 
+    /// Acquires a mutex lock, calls `.exec()`, and returns the result of `.getLastInsertRowId()`. This is the recommended method of inserting data; it prevents races in multithreaded environments re: getting the ID of the new row. Use this for *all* INSERTs.
+    pub fn insert(self: *DB, sql: [:0]const u8, args: anytype) Error!i64 {
+        self.insert_mutex.lock();
+        defer self.insert_mutex.unlock();
+        try self.exec(sql, args);
+        return self.getLastInsertRowId();
+    }
+
     /// Shorthand for `.prep()`, `.exec()`.
     pub fn query(self: *DB, sql: [:0]const u8, args: anytype, comptime Rowtype: type) Error!Cursor(Rowtype) {
         var stmt = try self.allocator.create(Stmt);
@@ -256,19 +265,19 @@ pub const DB = struct {
         return curs;
     }
 
-    /// **Footgun:** This can give unexpected results when multithreading. Consider using a shared mutex around all INSERTs. @todo write a shorthand function for this?
+    /// **Footgun:** This can give unexpected results when multithreading. Consider using `.insert()` for *all* INSERTs.
     pub fn getLastInsertRowId(self: *DB) i64 {
         return @intCast(cSqlite.sqlite3_last_insert_rowid(self.db));
     }
 };
 
-/// From the SQLite documention: "An instance of this object represents a single SQL statement that has been compiled into binary form and is ready to be evaluated."
+/// From the SQLite documentation: "An instance of this object represents a single SQL statement that has been compiled into binary form and is ready to be evaluated."
 const Stmt = struct {
     db: ?*DB,
     cStmt: *cSqlite.sqlite3_stmt,
     on_end: enum { reset, finalize, destroy } = .reset,
 
-    /// The destructor. Every Stmt must be destructed before the database can be closed. @todo confirm if this must be called manually, or if the Cursor object automatically calls this for us when atempting to fetch the row after the last row.
+    /// The destructor. Every Stmt must be destructed before the database can be closed. @todo confirm if this must be called manually, or if the Cursor object automatically calls this for us when attempting to fetch the row after the last row.
     pub fn finalize(self: *Stmt) void {
         if (self.db != null) {
             switch (self.on_end) {
@@ -442,12 +451,12 @@ const test_allocator = std.testing.allocator;
 const print = std.debug.print;
 
 test "open db" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
+    std.fs.cwd().deleteFile("test.db") catch {};
 
-    var db = try DB.open(test_allocator, "testdb.db");
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     //     errdefer print("got err: {?s}\n", .{db.errmsg});
 
@@ -459,11 +468,11 @@ test "open db" {
 }
 
 test "compile statement" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     //     errdefer print("got err: {?s}\n", .{db.errmsg});
 
@@ -472,11 +481,11 @@ test "compile statement" {
 }
 
 test "don't compile bad statement" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     //     errdefer print("got err: {?s}\n", .{db.errmsg});
 
@@ -485,11 +494,11 @@ test "don't compile bad statement" {
 }
 
 test "execute statement" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     //     errdefer print("got err: {?s}\n", .{db.errmsg});
 
@@ -504,24 +513,24 @@ test "execute statement" {
 }
 
 test "execute statement - antishortcut" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     // errdefer print("got err: {?s}\n", .{db.errmsg});
     {
-        var stmt = try db.prep("create table testtable1 (col1, col2)");
+        var stmt = try db.prep("create table t1 (col1, col2)");
         try stmt.exec(.{}, void);
     }
     {
-        var stmt = try db.prep("insert into testtable1 (col1, col2) values (?, ?)");
+        var stmt = try db.prep("insert into t1 (col1, col2) values (?, ?)");
         try stmt.exec(.{ 1, 2 }, void);
     }
 
     {
-        var stmt = try db.prep("select col1, col2 from testtable1");
+        var stmt = try db.prep("select col1, col2 from t1");
         var curs = try stmt.exec(.{}, struct { col1: i32, col2: i32 });
         const r1 = try curs.fetch();
         try std.testing.expectEqual(@TypeOf(r1.?){ .col1 = 1, .col2 = 2 }, r1.?);
@@ -532,17 +541,17 @@ test "execute statement - antishortcut" {
 }
 
 test "execute statement - shortcut" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     // errdefer print("got err: {?s}\n", .{db.errmsg});
 
-    try db.exec("create table testtable1 (col1, col2)", .{});
-    try db.exec("insert into testtable1 (col1, col2) values (?, ?)", .{ 1, 2 });
-    var c1 = try db.query("select col1, col2 from testtable1", .{}, struct { col1: i32, col2: i32 });
+    try db.exec("create table t1 (col1, col2)", .{});
+    try db.exec("insert into t1 (col1, col2) values (?, ?)", .{ 1, 2 });
+    var c1 = try db.query("select col1, col2 from t1", .{}, struct { col1: i32, col2: i32 });
     const r1 = try c1.fetch();
     try std.testing.expectEqual(@TypeOf(r1.?){ .col1 = 1, .col2 = 2 }, r1.?);
 
@@ -551,17 +560,17 @@ test "execute statement - shortcut" {
 }
 
 test "do some db stuff" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     // errdefer print("got err: {?s}\n", .{db.errmsg});
 
-    try db.exec("create table testtable1 (col1, col2)", .{});
+    try db.exec("create table t1 (col1, col2)", .{});
 
-    var stmt = try db.prep("select * from testtable1");
+    var stmt = try db.prep("select * from t1");
     defer stmt.finalize();
 
     var curs = try stmt.exec(.{}, struct { c1: i32, c2: ?[]const u8 });
@@ -570,20 +579,20 @@ test "do some db stuff" {
         std.debug.panic("expected null, found {}", .{payload});
     }
 
-    try db.exec("insert into testtable1 (col1, col2) values (19, 'mucho')", .{});
+    try db.exec("insert into t1 (col1, col2) values (19, 'foo')", .{});
 
     var curs2 = try stmt.exec(.{}, struct { c1: i32, c2: ?[]const u8 });
     const row2 = try curs2.fetch();
     try std.testing.expectEqual(@as(i32, 19), row2.?.c1);
-    try std.testing.expectEqualStrings("mucho", row2.?.c2.?);
+    try std.testing.expectEqualStrings("foo", row2.?.c2.?);
 }
 
 test "execute statement with arguments" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     // errdefer print("got err: {?s}\n", .{db.errmsg});
 
@@ -596,11 +605,11 @@ test "execute statement with arguments" {
 }
 
 test "execute statement with named arguments" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     errdefer print("got err: {?s}\n", .{db.errmsg});
 
@@ -613,18 +622,18 @@ test "execute statement with named arguments" {
 }
 
 test "more types on statement arguments" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     errdefer print("got err: {?s}\n", .{db.errmsg});
 
-    try db.exec("create table testtable1 (col1, col2)", .{});
+    try db.exec("create table t1 (col1, col2)", .{});
 
     {
-        var stmt = try db.prep("insert into testtable1 (col1, col2) values (?, ?)");
+        var stmt = try db.prep("insert into t1 (col1, col2) values (?, ?)");
         defer stmt.finalize();
 
         try stmt.exec(.{ "one", "twos" }, void);
@@ -632,7 +641,7 @@ test "more types on statement arguments" {
     }
 
     {
-        var stmt2 = try db.prep("select col1, col2 from testtable1");
+        var stmt2 = try db.prep("select col1, col2 from t1");
         defer stmt2.finalize();
 
         const rowtype = struct { c1: ?[]const u8, c2: []const u8 };
@@ -652,17 +661,17 @@ test "more types on statement arguments" {
 }
 
 test "exec on iteration" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     errdefer print("got err: {?s}\n", .{db.errmsg});
 
-    try db.exec("create table testtable1b (col1, col2)", .{});
+    try db.exec("create table t1b (col1, col2)", .{});
 
-    var stmt = try db.prep("insert into testtable1b (col1, col2) values (:uno, :dos)");
+    var stmt = try db.prep("insert into t1b (col1, col2) values (:uno, :dos)");
     const rows = [_]struct { uno: []const u8, dos: []const u8 }{
         .{ .uno = "A", .dos = "B" },
         .{ .uno = "left", .dos = "right" },
@@ -674,20 +683,20 @@ test "exec on iteration" {
 }
 
 test "iteration style" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
     errdefer print("got err: {?s}\n", .{db.errmsg});
 
     try db.exec(
-        \\ create table testtable2 (col1, col2);
-        \\ insert into testtable2 (col1, col2) values ("one", 1.2), ("two", 2.3), ("three", 3.4);
+        \\ create table t2 (col1, col2);
+        \\ insert into t2 (col1, col2) values ("one", 1.2), ("two", 2.3), ("three", 3.4);
     , .{});
 
-    var stmt = try db.prep("select * from testtable2");
+    var stmt = try db.prep("select * from t2");
     var curs = try stmt.exec(.{}, struct {
         a: []const u8,
         b: f32,
@@ -717,11 +726,11 @@ test "iteration style" {
 }
 
 test "read boolean" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
 
     {
@@ -746,11 +755,11 @@ test "read boolean" {
 }
 
 test "write boolean" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
 
     try db.exec("create table t1 (col1, col2)", .{});
@@ -765,11 +774,11 @@ test "write boolean" {
 }
 
 test "db.exec with empty struct args" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
 
     try db.exec(
@@ -787,11 +796,11 @@ test "db.exec with empty struct args" {
 }
 
 test "db.exec with void args" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
 
     try db.exec(
@@ -809,11 +818,11 @@ test "db.exec with void args" {
 }
 
 test "bind optional value" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
 
     try db.exec("create table t1 (col1)", void);
@@ -826,11 +835,11 @@ test "bind optional value" {
 }
 
 test "get last insert row id" {
-    std.fs.cwd().deleteFile("testdb.db") catch {};
-    var db = try DB.open(test_allocator, "testdb.db");
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
     defer {
         db.close() catch {};
-        std.fs.cwd().deleteFile("testdb.db") catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
     }
 
     try db.exec("create table t1 (col1)", void);
@@ -840,4 +849,15 @@ test "get last insert row id" {
     try db.exec("insert into t1 (col1) values (?)", .{1});
     try std.testing.expect(db.getLastInsertRowId() == 2);
     try std.testing.expect(db.getLastInsertRowId() == 2);
+}
+
+test "basic db.insert" {
+    var db = try DB.open(test_allocator, ":memory:");
+    defer db.close() catch {};
+
+    try db.exec("create table t1 (col1)", .{});
+    var rowid = try db.insert("INSERT INTO t1 VALUES ('foo')", .{});
+    try std.testing.expectEqual(1, rowid);
+    rowid = try db.insert("INSERT INTO t1 VALUES ('bar')", .{});
+    try std.testing.expectEqual(2, rowid);
 }
