@@ -265,6 +265,14 @@ pub const DB = struct {
         return curs;
     }
 
+    /// Executes the given SQL, and returns the first row of the result.
+    pub fn first(self: *DB, sql: [:0]const u8, args: anytype, comptime Rowtype: type) Error!?Rowtype {
+        var cursor = try self.query(sql, args, Rowtype);
+        const row = try cursor.fetch();
+        defer cursor.finalize();
+        return row;
+    }
+
     /// **Footgun:** This can give unexpected results when multithreading. Consider using `.insert()` for *all* INSERTs.
     pub fn getLastInsertRowId(self: *DB) i64 {
         return @intCast(cSqlite.sqlite3_last_insert_rowid(self.db));
@@ -551,6 +559,20 @@ test "execute statement - shortcut" {
 
     const r2 = try c1.fetch();
     try std.testing.expect(r2 == null);
+}
+
+test "db.first" {
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
+    defer {
+        db.close() catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
+    }
+
+    try db.exec("create table t1 (col1, col2)", .{});
+    try db.exec("insert into t1 (col1, col2) values (?, ?)", .{ 1, 2 });
+    const row = try db.first("select col1, col2 from t1", .{}, struct { col1: i32, col2: i32 });
+    try std.testing.expectEqual(@TypeOf(row.?){ .col1 = 1, .col2 = 2 }, row.?);
 }
 
 test "do some db stuff" {
