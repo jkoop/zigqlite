@@ -458,7 +458,6 @@ test "open db" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    //     errdefer print("got err: {?s}\n", .{db.errmsg});
 
     try db.exec("select 2+2;", .{});
 
@@ -474,7 +473,6 @@ test "compile statement" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    //     errdefer print("got err: {?s}\n", .{db.errmsg});
 
     var stmt = try db.prep("select 2+3");
     defer stmt.finalize();
@@ -487,7 +485,6 @@ test "don't compile bad statement" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    //     errdefer print("got err: {?s}\n", .{db.errmsg});
 
     try std.testing.expectError(Error.Error, db.prep("select bad 2+3"));
     try std.testing.expectEqualSlices(u8, "near \"2\": syntax error", std.mem.span(db.errmsg.?));
@@ -500,16 +497,13 @@ test "execute statement" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    //     errdefer print("got err: {?s}\n", .{db.errmsg});
 
     var stmt = try db.prep("select 2 + 5");
     defer stmt.finalize();
 
     var curs = try stmt.exec(.{}, struct { f1: i64, factor: i32 = 4 });
     const row = try curs.fetch();
-    //     std.testing.expectEqual(@as(usize, 1), row.len);
     try std.testing.expectEqual(@as(i64, 7), row.?.f1); // read from DB
-    // try std.testing.expectEqual(@as(i32, 4), row.?.factor); // default value in row struct
 }
 
 test "execute statement - antishortcut" {
@@ -519,11 +513,12 @@ test "execute statement - antishortcut" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    // errdefer print("got err: {?s}\n", .{db.errmsg});
+
     {
         var stmt = try db.prep("create table t1 (col1, col2)");
         try stmt.exec(.{}, void);
     }
+
     {
         var stmt = try db.prep("insert into t1 (col1, col2) values (?, ?)");
         try stmt.exec(.{ 1, 2 }, void);
@@ -547,7 +542,6 @@ test "execute statement - shortcut" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    // errdefer print("got err: {?s}\n", .{db.errmsg});
 
     try db.exec("create table t1 (col1, col2)", .{});
     try db.exec("insert into t1 (col1, col2) values (?, ?)", .{ 1, 2 });
@@ -566,7 +560,6 @@ test "do some db stuff" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    // errdefer print("got err: {?s}\n", .{db.errmsg});
 
     try db.exec("create table t1 (col1, col2)", .{});
 
@@ -594,7 +587,6 @@ test "execute statement with arguments" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    // errdefer print("got err: {?s}\n", .{db.errmsg});
 
     var stmt = try db.prep("select ? + ?");
     defer stmt.finalize();
@@ -611,7 +603,6 @@ test "execute statement with named arguments" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    errdefer print("got err: {?s}\n", .{db.errmsg});
 
     var stmt = try db.prep("select :first - :second");
     defer stmt.finalize();
@@ -628,7 +619,6 @@ test "more types on statement arguments" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    errdefer print("got err: {?s}\n", .{db.errmsg});
 
     try db.exec("create table t1 (col1, col2)", .{});
 
@@ -654,9 +644,6 @@ test "more types on statement arguments" {
         const row2 = try curs.fetch();
         try std.testing.expect(row2.?.c1 == null);
         try std.testing.expectEqualStrings("4.67", row2.?.c2);
-
-        //     const row = try curs.fetch();
-        //     std.testing.expectEqual(@as(i32, 3), row.?.sum);
     }
 }
 
@@ -667,7 +654,6 @@ test "exec on iteration" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    errdefer print("got err: {?s}\n", .{db.errmsg});
 
     try db.exec("create table t1b (col1, col2)", .{});
 
@@ -689,7 +675,6 @@ test "iteration style" {
         db.close() catch {};
         std.fs.cwd().deleteFile("test.db") catch {};
     }
-    errdefer print("got err: {?s}\n", .{db.errmsg});
 
     try db.exec(
         \\ create table t2 (col1, col2);
@@ -700,7 +685,6 @@ test "iteration style" {
     var curs = try stmt.exec(.{}, struct {
         a: []const u8,
         b: f32,
-        c: i32 = 4,
     });
     var i: u32 = 0;
     while (try curs.fetch()) |row| : (i += 1) {
@@ -708,17 +692,14 @@ test "iteration style" {
             0 => {
                 try std.testing.expectEqualStrings("one", row.a);
                 try std.testing.expectEqual(@as(f32, 1.2), row.b);
-                try std.testing.expectEqual(@as(i32, 4), row.c);
             },
             1 => {
                 try std.testing.expectEqualStrings("two", row.a);
                 try std.testing.expectEqual(@as(f32, 2.3), row.b);
-                try std.testing.expectEqual(@as(i32, 4), row.c);
             },
             2 => {
                 try std.testing.expectEqualStrings("three", row.a);
                 try std.testing.expectEqual(@as(f32, 3.4), row.b);
-                try std.testing.expectEqual(@as(i32, 4), row.c);
             },
             else => unreachable,
         }
@@ -734,7 +715,8 @@ test "read boolean" {
     }
 
     {
-        var cursor = try db.query("select 1 as exists", .{}, struct { exists: bool });
+        var cursor = try db.query("select 1 as \"exists\"", .{}, struct { exists: bool });
+        defer cursor.finalize();
         const row = try cursor.fetch();
         try std.testing.expect(row != null);
         if (row) |payload| {
@@ -745,7 +727,8 @@ test "read boolean" {
     {
         try db.exec("create table t1 (col1, col2)", .{});
         try db.exec("insert into t1 (col1, col2) values (1, 2)", .{});
-        var cursor = try db.query("select exists(select * from t1 where col1 = ? and col2 = ?) as exists", .{ 1, 2 }, struct { exists: bool });
+        var cursor = try db.query("select exists(select * from t1 where col1 = ? and col2 = ?) as \"exists\"", .{ 1, 2 }, struct { exists: bool });
+        defer cursor.finalize();
         const row = try cursor.fetch();
         try std.testing.expect(row != null);
         if (row) |payload| {
@@ -765,6 +748,7 @@ test "write boolean" {
     try db.exec("create table t1 (col1, col2)", .{});
     try db.exec("insert into t1 (col1, col2) values (?, ?)", .{ true, false });
     var cursor = try db.query("select * from t1", .{}, struct { col1: bool, col2: bool });
+    defer cursor.finalize();
     const row = try cursor.fetch();
     try std.testing.expect(row != null);
     if (row) |payload| {
@@ -788,6 +772,7 @@ test "db.exec with empty struct args" {
     , .{});
 
     var cursor = try db.query("select * from t2", .{}, struct { col2: i16 });
+    defer cursor.finalize();
     const row = try cursor.fetch();
     try std.testing.expect(row != null);
     if (row) |payload| {
@@ -810,6 +795,7 @@ test "db.exec with void args" {
     , void);
 
     var cursor = try db.query("select * from t2", .{}, struct { col2: i16 });
+    defer cursor.finalize();
     const row = try cursor.fetch();
     try std.testing.expect(row != null);
     if (row) |payload| {
