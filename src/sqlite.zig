@@ -331,7 +331,6 @@ const Stmt = struct {
     }
 
     fn bind_parameter(self: *Stmt, i: c_int, comptime name: []const u8, arg: anytype) Error!void {
-        // print ("bind_parameter: [{}]'{s}': <{any}>, ({s})\n", .{i, name, arg, @typeName(@TypeOf(arg))});
         var index = i;
         if (name.len > 0 and (name[0] < '0' or name[0] > '9')) {
             index = cSqlite.sqlite3_bind_parameter_index(self.cStmt, ":" ++ name);
@@ -354,7 +353,10 @@ const Stmt = struct {
             } else {
                 return getErrOrVoid(cSqlite.sqlite3_bind_null(self.cStmt, index));
             },
-            else => Error.Mismatch,
+            .Enum => getErrOrVoid(cSqlite.sqlite3_bind_int(self.cStmt, index, @intFromEnum(arg))),
+            else => {
+                @compileError("Field type not supported: " ++ @typeName(arg));
+            },
         };
     }
 
@@ -448,7 +450,13 @@ fn Cursor(comptime Rowtype: type) type {
                     return self.readCol(optInfo.child, i);
                 },
 
-                else => {},
+                .Enum => {
+                    return @enumFromInt(cSqlite.sqlite3_column_int(stmt.cStmt, i));
+                },
+
+                else => {
+                    @compileError("Field type not supported: " ++ @typeName(T));
+                },
             }
             unreachable;
         }
@@ -840,6 +848,37 @@ test "bind optional value" {
 
     col = 42;
     try db.exec("insert into t1 (col1) values (?)", .{col});
+}
+
+test "test read and write enum" {
+    std.fs.cwd().deleteFile("test.db") catch {};
+    var db = try DB.open(test_allocator, "test.db");
+    defer {
+        db.close() catch {};
+        std.fs.cwd().deleteFile("test.db") catch {};
+    }
+
+    const Enum = enum(u8) {
+        A,
+        B,
+    };
+
+    try db.exec("create table t1 (col1)", void);
+    try db.exec("insert into t1 (col1) values (?), (?)", .{ Enum.A, Enum.B });
+
+    var cursor = try db.query("select * from t1", .{}, struct { col1: Enum });
+    defer cursor.finalize();
+    const row = try cursor.fetch();
+    try std.testing.expect(row != null);
+    if (row) |payload| {
+        try std.testing.expect(payload.col1 == Enum.A);
+    }
+
+    const row2 = try cursor.fetch();
+    try std.testing.expect(row2 != null);
+    if (row2) |payload| {
+        try std.testing.expect(payload.col1 == Enum.B);
+    }
 }
 
 test "get last insert row id" {
