@@ -229,7 +229,7 @@ pub const DB = struct {
     /// Compiles the given SQL, and executes it with the given bindings, `args`. To execute multiple semicolon-separated statements in one call, set `args` to an empty struct or void. **Footgun:** Use `.insert()` for *all* INSERTs; see `.insert()` for more info.
     pub fn exec(self: *DB, sql: [:0]const u8, args: anytype) Error!void {
         const use_prep: bool = switch (@typeInfo(@TypeOf(args))) {
-            .Struct => |Struct| Struct.fields.len > 0,
+            .@"struct" => |@"struct"| @"struct".fields.len > 0,
             else => false,
         };
 
@@ -338,22 +338,22 @@ const Stmt = struct {
         }
 
         return switch (@typeInfo(@TypeOf(arg))) {
-            .Bool => getErrOrVoid(cSqlite.sqlite3_bind_int(self.cStmt, index, @intFromBool(arg))),
-            .Int, .ComptimeInt => getErrOrVoid(cSqlite.sqlite3_bind_int64(self.cStmt, index, @intCast(arg))),
-            .Float, .ComptimeFloat => getErrOrVoid(cSqlite.sqlite3_bind_double(self.cStmt, index, @floatCast(arg))),
-            .Pointer => |ptr_info| switch (ptr_info.size) {
-                .One => self.bind_parameter(i, name, arg.*),
-                .Slice => self.bind_slice(index, arg),
+            .bool => getErrOrVoid(cSqlite.sqlite3_bind_int(self.cStmt, index, @intFromBool(arg))),
+            .int, .comptime_int => getErrOrVoid(cSqlite.sqlite3_bind_int64(self.cStmt, index, @intCast(arg))),
+            .float, .comptime_float => getErrOrVoid(cSqlite.sqlite3_bind_double(self.cStmt, index, @floatCast(arg))),
+            .pointer => |ptr_info| switch (ptr_info.size) {
+                .one => self.bind_parameter(i, name, arg.*),
+                .slice => self.bind_slice(index, arg),
                 else => self.bind_slice(index, std.mem.span(arg)),
             },
-            .Array => self.bind_slice(index, arg[0..]),
-            .Null => getErrOrVoid(cSqlite.sqlite3_bind_null(self.cStmt, index)),
-            .Optional => if (arg) |not_null| {
+            .array => self.bind_slice(index, arg[0..]),
+            .null => getErrOrVoid(cSqlite.sqlite3_bind_null(self.cStmt, index)),
+            .optional => if (arg) |not_null| {
                 return self.bind_parameter(i, name, not_null);
             } else {
                 return getErrOrVoid(cSqlite.sqlite3_bind_null(self.cStmt, index));
             },
-            .Enum => getErrOrVoid(cSqlite.sqlite3_bind_int(self.cStmt, index, @intFromEnum(arg))),
+            .@"enum" => getErrOrVoid(cSqlite.sqlite3_bind_int(self.cStmt, index, @intFromEnum(arg))),
             else => {
                 @compileError("Field type not supported: " ++ @typeName(arg));
             },
@@ -414,12 +414,12 @@ fn Cursor(comptime Rowtype: type) type {
             const stmt = self.stmt orelse unreachable;
 
             switch (@typeInfo(T)) {
-                .Bool => {
+                .bool => {
                     const ccolval = cSqlite.sqlite3_column_int(stmt.cStmt, i);
                     return ccolval != 0;
                 },
 
-                .Int => |intInfo| if (intInfo.signedness == .signed) {
+                .int => |intInfo| if (intInfo.signedness == .signed) {
                     if (intInfo.bits <= 32) {
                         const ccolval = cSqlite.sqlite3_column_int(stmt.cStmt, i);
                         return @intCast(ccolval);
@@ -430,12 +430,12 @@ fn Cursor(comptime Rowtype: type) type {
                     @compileError("Unsigned field not supported.");
                 },
 
-                .Float => {
+                .float => {
                     const fcol = cSqlite.sqlite3_column_double(stmt.cStmt, i);
                     return @floatCast(fcol);
                 },
 
-                .Pointer => {
+                .pointer => {
                     const textptr = cSqlite.sqlite3_column_text(stmt.cStmt, i);
                     const textlen = cSqlite.sqlite3_column_bytes(stmt.cStmt, i);
                     if (textptr == null or textlen < 0) {
@@ -444,13 +444,13 @@ fn Cursor(comptime Rowtype: type) type {
                     return textptr[0..@intCast(textlen)];
                 },
 
-                .Optional => |optInfo| {
+                .optional => |optInfo| {
                     if (cSqlite.sqlite3_column_type(stmt.cStmt, i) == cSqlite.SQLITE_NULL)
                         return null;
                     return self.readCol(optInfo.child, i);
                 },
 
-                .Enum => {
+                .@"enum" => {
                     return @enumFromInt(cSqlite.sqlite3_column_int(stmt.cStmt, i));
                 },
 
