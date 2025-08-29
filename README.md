@@ -1,7 +1,7 @@
 # zigqlite
 
 > [!NOTE]  
-> Forked from https://chiselapp.com/user/javier/repository/zigqlite
+> Forked from https://chiselapp.com/user/javier/repository/zigqlite, 2024-07-24
 
 An [SQLite](https://sqlite.org) binding for [Zig](https://ziglang.org).
 
@@ -12,16 +12,15 @@ zig fetch --save https://github.com/jkoop/zigqlite/archive/COMMIT.zip
 ```
 
 ```zig
-// build.zig before b.installArtifact(exe);
+// add to your build.zig, in your Module's .imports
+.{
+    .name = "zigqlite",
+    .module = b.dependency("zigqlite", .{ .target = target }).module("zigqlite"),
+},
 
-const zigqlite = b.dependency("zigqlite", .{
-    .target = target,
-    .optimize = optimize,
-}).module("zigqlite");
-
+// add before `b.installArtifact(exe);`
 exe.linkSystemLibrary("c");
 exe.linkSystemLibrary("sqlite3"); // apt install libsqlite3-dev
-exe.root_module.addImport("zigqlite", zigqlite);
 ```
 
 ## Usage
